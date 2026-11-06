@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in - Azure Dev Proxy</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; }
+    body { max-width: 32rem; margin: 12vh auto; padding: 1rem; }
+    input, button { box-sizing: border-box; font: inherit; padding: .6rem; }
+    input { width: 100%; margin: .5rem 0 1rem; }
+    .error { color: #bd2828; }
+  </style>
+</head>
+<body>
+  <h1>Azure Dev Proxy</h1>
+  <p>Enter the proxy authentication key to continue.</p>
+  <p class="error" role="alert">__ERROR__</p>
+  <form method="post" action="/:login">
+    <input type="hidden" name="next" value="__NEXT__">
+    <label for="token">Authentication key</label>
+    <input id="token" name="token" type="password" required autofocus autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" data-editable="__EDITABLE__">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="azure-dev-proxy-csrf" content="__CSRF__">
+  <meta name="azure-dev-proxy-forward-origin" content="__FORWARD_ORIGIN__">
+  <title>Azure Dev Proxy</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.6 system-ui, sans-serif; --muted: #66758b; --line: #cbd5e1; --panel: #fff; --ink: #14253d; --accent: #1266df; background: #edf3fb; color: var(--ink); }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 2rem 1rem; }
+    main { width: min(100%, 760px); }
+    header { text-align: center; margin-bottom: 2rem; }
+    .badge { color: var(--accent); font-size: .75rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { font-size: clamp(2rem, 6vw, 3rem); margin: .3rem 0; letter-spacing: -.04em; }
+    p { color: var(--muted); margin: .5rem 0 1rem; }
+    a { color: var(--accent); }
+    section, details { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 1.5rem; box-shadow: 0 12px 40px #14253d08; }
+    details { margin-top: 1rem; }
+    summary { cursor: pointer; font-weight: 650; }
+    label { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .4rem; }
+    input, button { font: inherit; border-radius: 8px; padding: .7rem .85rem; }
+    input { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--panel); color: inherit; }
+    input:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px solid #73a8f5; outline-offset: 3px; }
+    button { border: 0; background: var(--accent); color: #fff; cursor: pointer; font-weight: 600; white-space: nowrap; }
+    button.secondary { background: transparent; border: 1px solid var(--line); color: inherit; padding: .25rem .6rem; font-size: .8rem; }
+    .row { display: flex; gap: .6rem; }
+    .field { flex: 1; min-width: 0; }
+    .note { font-size: .8rem; margin-top: .8rem; }
+    .warning { border-left: 3px solid #d18c16; padding-left: .8rem; }
+    h2 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; text-align: left; }
+    th, td { padding: .65rem .4rem; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    th { color: var(--muted); font-weight: 500; }
+    #status { min-height: 1.6em; font-size: .85rem; color: var(--muted); }
+    #status.error { color: #bd2828; }
+    footer { text-align: center; color: var(--muted); font-size: .75rem; margin-top: 1.5rem; }
+    @media (max-width: 540px) { .row { flex-direction: column; } section, details { padding: 1rem; } }
+    @media (prefers-color-scheme: dark) { :root { --muted: #a7b7cb; --line: #33445b; --panel: #172338; --ink: #e8effa; --accent: #397fe9; background: #0e1726; } }
+  </style>
+  <script src="/:app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="badge">Local Azure authentication</span>
+      <h1>Azure Dev Proxy</h1>
+      <p>Your destination. Your Azure CLI identity.</p>
+    </header>
+    <section aria-label="Open a URL">
+      <form id="navigate">
+        <label for="destination">Paste an HTTP(S) URL</label>
+        <div class="row">
+          <input id="destination" type="text" inputmode="url" placeholder="example.com/path" required autocomplete="off" spellcheck="false">
+          <button type="submit">Open URL</button>
+        </div>
+      </form>
+      <p class="note">URLs without a scheme use HTTPS. HTTP destinations are always anonymous. HTTPS authentication follows the host mappings below.</p>
+    </section>
+    <details>
+      <summary>Host mappings and temporary overrides</summary>
+      <p class="note"><a id="edit-link" href="__EDIT_URL__">Edit mappings on localhost</a>. Forwarded pages use a separate, read-only loopback origin.</p>
+      <p class="note">Overrides take priority over persisted rules. Within overrides: exact hosts first, then the longest wildcard suffix. The first matching rule wins.</p>
+      <p class="note warning"><strong>Temporary means temporary.</strong> Overrides disappear when this process exits, including automatic idle shutdown. Active requests and streams prevent idle shutdown; an open page does not.</p>
+      <h2>Persisted configuration</h2>
+      <p class="note">Saving a temporary rule replaces its persisted mapping and removes the temporary override. Persisted changes update the configuration file and apply immediately.</p>
+      <div class="table-wrap"><table><thead><tr><th scope="col">Hostname</th><th scope="col">Token resource</th><th scope="col" __EDITOR_HIDDEN__>Action</th></tr></thead><tbody id="base-rules"></tbody></table></div>
+      <h2>Temporary overrides</h2>
+      <div class="table-wrap"><table><thead><tr><th scope="col">Hostname</th><th scope="col">Token resource</th><th scope="col" __EDITOR_HIDDEN__>Action</th></tr></thead><tbody id="overrides"></tbody></table></div>
+      <div __EDITOR_HIDDEN__>
+      <h2>Add or replace an override</h2>
+      <form id="override">
+        <div class="row">
+          <div class="field"><label for="hostname">Hostname or wildcard</label><input id="hostname" placeholder="api.example.com or *.example.com" required spellcheck="false"></div>
+          <div class="field"><label for="resource">HTTPS token resource</label><input id="resource" type="url" placeholder="Blank: destination origin" spellcheck="false"></div>
+        </div>
+        <p class="note">A blank resource requests a token for the destination's HTTPS origin.</p>
+        <button type="submit">Save temporary override</button>
+      </form>
+      </div>
+      <h2>Effective rules (match order)</h2>
+      <div class="table-wrap"><table><thead><tr><th scope="col">Hostname</th><th scope="col">Token resource</th></tr></thead><tbody id="effective-rules"></tbody></table></div>
+    </details>
+    <p id="status" role="status" aria-live="polite"></p>
+    <footer class="warning" __AUTH_WARNING_HIDDEN__><strong>Token authentication disabled:</strong> Other local users and trusted browser origins can use this proxy's Azure identity. Do not use on shared machines.</footer>
+  </main>
+</body>
+</html>
