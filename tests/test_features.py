@@ -99,6 +99,46 @@ class TestCLI:
 
 
 class TestServe:
+    @pytest.mark.parametrize("terminal", [True, False])
+    @pytest.mark.parametrize(
+        ("key", "encoded_key"),
+        [("startup-test-key", "startup-test-key"), ("a key+&", "a+key%2B%26")],
+    )
+    async def test_startup_credentials_are_colored_only_on_terminals(
+        self, terminal, key, encoded_key, caplog
+    ):
+        proxy = Proxy(
+            TokenProvider(AsyncMock()),
+            port=8080,
+            config=Config(()),
+            authentication=ProxyAuthentication(key),
+        )
+        with (
+            patch("azure_dev_proxy.proxy.sys.stderr.isatty", return_value=terminal),
+            caplog.at_level("INFO", logger="azure_dev_proxy.proxy"),
+        ):
+            await asyncio.wait_for(proxy._serve([], idle_timeout=0.01), 1)
+        link = f"http://localhost:8080/?azure-dev-proxy-token={encoded_key}"
+        if terminal:
+            link = f"\x1b[34m{link}\x1b[0m"
+            key = f"\x1b[31m{key}\x1b[0m"
+        assert f"Open this link in your browser to sign in: {link}" in caplog.messages
+        assert f"If prompted, the 'Authentication Key' is: {key}" in caplog.messages
+        if not terminal:
+            assert "\x1b[" not in caplog.text
+
+    async def test_disabled_authentication_logs_no_startup_credentials(self, caplog):
+        proxy = Proxy(
+            TokenProvider(AsyncMock()),
+            port=8080,
+            config=Config(()),
+            authentication=ProxyAuthentication(None),
+        )
+        with caplog.at_level("INFO", logger="azure_dev_proxy.proxy"):
+            await asyncio.wait_for(proxy._serve([], idle_timeout=0.01), 1)
+        assert not any("sign in" in message for message in caplog.messages)
+        assert not any("Authentication Key" in message for message in caplog.messages)
+
     @pytest.mark.parametrize("failure", [None, "loop", "setup"])
     def test_listeners_precede_the_loop_and_close_on_exit(
         self, failure, capsys

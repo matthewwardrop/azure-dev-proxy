@@ -41,6 +41,39 @@ from azure_dev_proxy.tokens import AcquisitionError, AzureCLI, TokenProvider
 
 
 class TestInitialization:
+    @pytest.mark.parametrize("custom_key", [False, True])
+    def test_key_file_log_resolves_redirected_path(
+        self, tmp_path, monkeypatch, caplog, custom_key
+    ):
+        monkeypatch.delenv("AZURE_DEV_PROXY_TOKEN", raising=False)
+        key_path = tmp_path / ("custom-key" if custom_key else "auth-token")
+        redirected = tmp_path / "LocalCache" / "Roaming" / key_path.name
+
+        def redirected_realpath(path, *, strict=False):
+            assert Path(path) == key_path
+            assert key_path.is_file()
+            return str(redirected)
+
+        with (
+            patch("os.path.realpath", side_effect=redirected_realpath),
+            caplog.at_level("INFO", logger="azure_dev_proxy.proxy"),
+        ):
+            Proxy(
+                config=Config(()),
+                config_path=tmp_path / "config.json",
+                token_file=key_path if custom_key else None,
+            )
+        assert f"Proxy authentication key file: {redirected}" in caplog.text
+        assert key_path.read_text().strip() not in caplog.text
+
+    def test_key_file_log_shows_absolute_path(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level("INFO", logger="azure_dev_proxy.proxy"):
+            Proxy(config=Config(()), token_file=Path("custom-key"))
+        assert (
+            f"Proxy authentication key file: {tmp_path / 'custom-key'}" in caplog.text
+        )
+
     async def test_default_services_load_config_and_reuse_saved_key(
         self, tmp_path, monkeypatch
     ):
@@ -1813,11 +1846,11 @@ class TestLauncher:
         assert b"INFO: Proxy call url=" in errors
         assert b" method=GET token=no source=not-attempted" in errors
         assert b"token=no source=not-attempted" in errors
-        for host in ("localhost", "127.0.0.1"):
-            assert (
-                f"http://{host}:{port}/?azure-dev-proxy-token={token}".encode()
-                in errors
-            )
+        assert (
+            "Open this link in your browser to sign in: "
+            f"http://localhost:{port}/?azure-dev-proxy-token={token}"
+        ).encode() in errors
+        assert f"http://127.0.0.1:{port}/?".encode() not in errors
         request_logs = [line for line in errors.splitlines() if b"Proxy call " in line]
         assert all((token.encode() not in line for line in request_logs))
         assert b"Traceback" not in errors
