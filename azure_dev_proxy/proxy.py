@@ -140,7 +140,8 @@ class Proxy:
                     warning = f"\x1b[31m{warning}\x1b[0m"
                 print(warning, file=sys.stderr)
             elif token is None and token_path is not None:
-                LOG.info("Proxy authentication key file: %s", token_path)
+                # Store Python redirects AppData; resolve after the file exists.
+                LOG.info("Proxy authentication key file: %s", token_path.resolve())
         self.tokens = (
             tokens if tokens is not None else TokenProvider(AzureCLI(az_path).acquire)
         )
@@ -234,12 +235,22 @@ class Proxy:
                 f"Azure proxy listening at http://localhost:{self.port}",
                 flush=True,
             )
-            if self.authentication.enabled:
-                for host in ("localhost", "127.0.0.1"):
-                    LOG.info(
-                        "%s",
-                        self.authentication.login_url(f"http://{host}:{self.port}"),
-                    )
+            if (key := self.authentication._key) is not None:
+                # Signing in on localhost also pairs the 127.0.0.1 origin.
+                login_url = self.authentication.login_url(
+                    f"http://localhost:{self.port}"
+                )
+                terminal = sys.stderr.isatty()
+                if terminal:
+                    login_url = f"\x1b[34m{login_url}\x1b[0m"
+                LOG.info(
+                    "Open this link in your browser to sign in: %s",
+                    login_url,
+                )
+                key_text = key.decode("utf-8")
+                if terminal:
+                    key_text = f"\x1b[31m{key_text}\x1b[0m"
+                LOG.info("If prompted, the 'Authentication Key' is: %s", key_text)
             tasks = [asyncio.create_task(stop.wait())]
             idle = None
             if idle_timeout > 0:

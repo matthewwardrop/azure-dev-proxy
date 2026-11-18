@@ -26,7 +26,7 @@ configuration and reuses the key across restarts.
 
 ### Browser
 
-1. Open a ready-to-use URL from the startup logs, or visit
+1. Open the sign-in link from the startup logs, or visit
    `http://localhost:8080/` and enter the key.
 2. Add a [host mapping](#configure-host-mappings) if your service is not covered
    by the defaults.
