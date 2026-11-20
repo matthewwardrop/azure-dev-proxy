@@ -31,6 +31,7 @@ class GraphiQL(Router):
             raise web.HTTPBadRequest(text="Invalid destination route\n") from None
         call = validate_destination(request, route.target, port=self.proxy.port)
         if request.method in {"GET", "HEAD"}:
+            await request.app[REVERSE_PROXY_KEY].token_for(request, route.target, call)
             call.source = "graphiql-ui"
             return route.page()
         if request.method != "POST":

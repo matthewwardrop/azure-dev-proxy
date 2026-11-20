@@ -158,6 +158,18 @@ For GraphiQL, open:
 http://localhost:8080/:graphiql/https://api.example.com/graphql
 ```
 
+For mapped HTTPS destinations, GraphiQL checks token availability before loading
+the UI. If Azure CLI cannot supply a usable token, both GraphiQL and direct
+requests return HTTP 403 instead of forwarding anonymously. Requests accepting
+`text/html` receive a login-instructions page unless they send or accept JSON.
+Other clients, including Postman, receive a JSON `error` object with `code` and
+`message` fields.
+
+Run `az login` as the OS user running the proxy, using the configured `--az-path`
+CLI if applicable, then retry. Failed acquisitions are cached for 15 seconds.
+Unmatched hosts and HTTP destinations remain anonymous. Upstream errors retain
+their status, content type, and response body, including JSON error payloads.
+
 ### Browser applications
 
 To permit cross-origin forwarding from a local application, add its exact
