@@ -632,7 +632,7 @@ class TestProxy:
                     assert response.content_type == "text/html"
             assert forward.await_count == 2
         assert not self.requests
-        self.acquire.assert_not_awaited()
+        self.acquire.assert_awaited_once()
 
     async def test_authenticated_https_query_keeps_azure_auth_and_removes_proxy_key(
         self,
@@ -659,7 +659,7 @@ class TestProxy:
                 assert "Cookie" not in seen["headers"]
         assert self.acquire.await_count == 1
 
-    async def test_graphiql_pages_do_not_contact_upstream_or_acquire_tokens(self):
+    async def test_graphiql_pages_check_tokens_without_contacting_upstream(self):
         path = GRAPHQL_PREFIX + "https:/" + self.route("/a%2Fb?q=%3Cscript%3E&empty=")
         for method in ("GET", "HEAD"):
             response = await self.client.request(method, URL(path, encoded=True))
@@ -681,7 +681,7 @@ class TestProxy:
             else:
                 assert page == ""
         assert not self.requests
-        self.acquire.assert_not_awaited()
+        self.acquire.assert_awaited_once()
 
     async def test_schemeless_graphql_pages_and_posts_default_to_https(self):
         target = self.route("/a%2Fb?q=%2f&empty=")[1:]
@@ -690,7 +690,7 @@ class TestProxy:
             assert response.status == 200
             assert 'url: "https://' + target + '"' in await response.text()
         assert not self.requests
-        self.acquire.assert_not_awaited()
+        self.acquire.assert_awaited_once()
         async with self.client.post(path, data=b"query") as response:
             assert response.status == 200
             assert await response.read() == b"query"
@@ -961,6 +961,11 @@ class TestProxy:
             return web.Response(status=204)
         if request.path == "/error":
             return web.Response(status=403, text="denied")
+        if request.path == "/json-error":
+            return web.json_response(
+                {"error": {"code": "Forbidden", "message": "Access denied"}},
+                status=403,
+            )
         if request.path == "/slow":
             await asyncio.sleep(0.1)
             return web.Response(text="late")
@@ -1006,7 +1011,9 @@ class TestProxy:
             f"https://localhost:{self.upstream_server.port}"
         )
 
-    async def test_unmatched_and_failed_acquisition_are_anonymous(self, caplog):
+    async def test_unmatched_is_anonymous_but_failed_acquisition_is_rejected(
+        self, caplog
+    ):
         self.proxy.config = replace(self.proxy.config, token_rules=())
         response = await self.client.get(
             self.route(), headers={"Authorization": "caller-secret"}
@@ -1015,6 +1022,7 @@ class TestProxy:
         await response.read()
         assert "Authorization" not in self.requests[-1]["headers"]
         self.acquire.assert_not_awaited()
+        self.requests.clear()
         self.proxy.config = replace(
             self.proxy.config, token_rules=(TokenRule("localhost"),)
         )
@@ -1028,9 +1036,110 @@ class TestProxy:
             for record in caplog.records
         )
         assert response.status == 403
-        assert await response.text() == "denied"
-        assert "Authorization" not in self.requests[-1]["headers"]
+        assert "az login" in (await response.json())["error"]["message"]
+        assert not self.requests
         assert self.acquire.await_count == 1
+
+    @pytest.mark.parametrize(
+        ("prefix", "method", "headers", "content_type"),
+        [
+            (GRAPHQL_PREFIX, "GET", {"Accept": "text/html"}, "text/html"),
+            (GRAPHQL_PREFIX, "HEAD", {"Accept": "text/html"}, "text/html"),
+            ("/", "GET", {"Accept": "text/html"}, "text/html"),
+            (
+                GRAPHQL_PREFIX,
+                "POST",
+                {"Accept": "application/json"},
+                "application/json",
+            ),
+            ("/", "POST", {"Content-Type": "application/json"}, "application/json"),
+            ("/", "GET", {}, "application/json"),
+            (GRAPHQL_PREFIX, "GET", {}, "application/json"),
+            (GRAPHQL_PREFIX, "HEAD", {}, "application/json"),
+            (
+                "/",
+                "POST",
+                {"Accept": "text/html", "Content-Type": "application/problem+json"},
+                "application/json",
+            ),
+            (
+                "/",
+                "GET",
+                {"Accept": "text/html, application/json"},
+                "application/json",
+            ),
+        ],
+    )
+    async def test_login_failure_returns_403_without_ui_or_forwarding(
+        self, prefix, method, headers, content_type
+    ):
+        self.acquire.side_effect = AcquisitionError("private CLI details")
+        path = prefix + "https:/" + self.route()
+        for _ in range(2):
+            response = await self.client.request(method, path, headers=headers)
+            assert response.status == 403
+            assert response.content_type == content_type
+            assert response.headers["Cache-Control"] == "no-store"
+            body = await response.text()
+            if method == "HEAD":
+                assert body == ""
+            else:
+                assert "az login" in body
+                assert "private CLI details" not in body
+                assert "esm.sh" not in body
+                assert "__COOLDOWN__" not in body
+                assert "up to 15 seconds" in body
+                if content_type == "text/html":
+                    assert '<svg class="access-denied-icon"' in body
+                    assert body.index('<svg class="access-denied-icon"') < body.index(
+                        "<h1>Azure CLI Login Required</h1>"
+                    )
+                    assert "<h1>Azure Dev Proxy</h1>" not in body
+                if content_type == "application/json":
+                    assert (await response.json())["error"]["code"] == (
+                        "AzureAuthenticationUnavailable"
+                    )
+        self.acquire.assert_awaited_once()
+        assert not self.requests
+
+    async def test_graphiql_recovers_after_login_and_failure_cooldown(self):
+        now = 1000
+        self.tokens.clock = lambda: now
+        self.acquire.side_effect = [
+            AcquisitionError("expired session"),
+            json.dumps({"accessToken": "new-token", "expires_on": 4102444800}),
+        ]
+        path = GRAPHQL_PREFIX + "https:/" + self.route()
+        response = await self.client.get(path)
+        assert response.status == 403
+        await response.read()
+        now += 15
+        response = await self.client.get(path)
+        assert response.status == 200
+        assert response.content_type == "text/html"
+        await response.read()
+        assert not self.requests
+        response = await self.client.post(path, data=b"query")
+        assert response.status == 200
+        assert await response.read() == b"query"
+        assert self.requests[-1]["headers"]["Authorization"] == "Bearer new-token"
+        assert self.acquire.await_count == 2
+
+    @pytest.mark.parametrize("prefix", ["/", GRAPHQL_PREFIX])
+    @pytest.mark.parametrize("endpoint", ["/error", "/json-error"])
+    async def test_upstream_403_status_content_type_and_payload_are_preserved(
+        self, prefix, endpoint
+    ):
+        response = await self.client.post(prefix + "https:/" + self.route(endpoint))
+        assert response.status == 403
+        if endpoint == "/json-error":
+            assert response.content_type == "application/json"
+            assert await response.json() == {
+                "error": {"code": "Forbidden", "message": "Access denied"}
+            }
+        else:
+            assert response.content_type == "text/plain"
+            assert await response.text() == "denied"
 
     async def test_every_call_logs_url_and_token_source_once(self, caplog):
         path = "/echo?q=a%2Fb&access_token=private-query"

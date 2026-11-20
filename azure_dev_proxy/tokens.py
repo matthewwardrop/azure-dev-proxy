@@ -148,7 +148,7 @@ class TokenProvider:
         *,
         clock: Callable[[], float] = time.time,
         refresh_margin: float = 120,
-        cooldown: float = 30,
+        cooldown: float = 15,
         capacity: int = 128,
     ) -> None:
         if capacity < 1:
@@ -217,7 +217,7 @@ class TokenProvider:
                 entry = CacheEntry(token, usable_until)
             except AcquisitionError as error:
                 LOG.warning(
-                    "Token unavailable for %s (%s); forwarding anonymously for %.0f seconds",
+                    "Token unavailable for %s (%s); acquisition paused for %.0f seconds",
                     origin,
                     error,
                     self.cooldown,

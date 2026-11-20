@@ -100,10 +100,13 @@ class TestToken:
             or record.name.startswith("azure_dev_proxy.tokens" + ".")
             for record in caplog.records
         )
-        assert "forwarding anonymously" in caplog.messages[0]
+        assert "acquisition paused" in caplog.messages[0]
         assert await self.provider.get("https://a", "https://shared") is None
         assert await self.provider.get("https://b", "https://shared") == "b-token"
-        self.now = 1030
+        self.now = 1014.999
+        assert await self.provider.get("https://a", "https://shared") is None
+        assert self.acquire.await_count == 2
+        self.now = 1015
         assert await self.provider.get("https://a", "https://shared") == "a-token"
         assert self.acquire.await_count == 3
 

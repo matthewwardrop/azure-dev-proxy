@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
+from importlib.resources import files
 
 from aiohttp import ClientError, web
 from multidict import CIMultiDict
@@ -9,7 +11,7 @@ from yarl import URL
 
 from ..auth import ROUTE_KEY, TOKEN_HEADER, ProxyAuthentication
 from ._base import Router
-from .management import MANAGEMENT_KEY
+from .management import MANAGEMENT_KEY, RESPONSE_HEADERS
 from .utils import (
     ProxyCall,
     parse_target,
@@ -48,6 +50,57 @@ class ReverseProxy(Router):
         call = validate_destination(request, target, port=self.proxy.port)
         return await self.forward(request, target, call)
 
+    async def token_for(
+        self, request: web.Request, target: URL, call: ProxyCall
+    ) -> str | None:
+        """Return the destination's token, rejecting mapped requests if unavailable."""
+        origin = str(target.origin())
+        resource = request.app[MANAGEMENT_KEY].resource_for(origin, self.proxy.config)
+        call.source = "non-https" if target.scheme != "https" else "not-allowlisted"
+        if resource is None:
+            return None
+        call.source = "acquisition-interrupted"
+        result = await self.proxy.tokens.get_with_status(origin, resource)
+        call.source = result.source
+        call.token = result.token is not None
+        if result.token is None:
+            message = (
+                "Azure CLI authentication is unavailable. Your login may have expired. "
+                "Run az login (or the CLI configured with --az-path) as the same "
+                "OS user running the proxy. Then retry after the token failure "
+                f"cooldown (up to {self.proxy.tokens.cooldown:g} seconds). "
+                "If authentication still fails, check the host mapping's resource "
+                "and your account's access."
+            )
+            accept = request.headers.get("Accept", "")
+            json_request = (
+                request.content_type == "application/json"
+                or request.content_type.endswith("+json")
+                or "application/json" in accept
+            )
+            if "text/html" in accept and not json_request:
+                body = (
+                    files("azure_dev_proxy")
+                    .joinpath("static/az-login.html")
+                    .read_text(encoding="utf-8")
+                    .replace("__COOLDOWN__", f"{self.proxy.tokens.cooldown:g}")
+                )
+                content_type = "text/html"
+            else:
+                body = json.dumps(
+                    {
+                        "error": {
+                            "code": "AzureAuthenticationUnavailable",
+                            "message": message,
+                        }
+                    }
+                )
+                content_type = "application/json"
+            raise web.HTTPForbidden(
+                text=body, content_type=content_type, headers=RESPONSE_HEADERS
+            )
+        return result.token
+
     async def forward(
         self,
         request: web.Request,
@@ -74,15 +127,9 @@ class ReverseProxy(Router):
             referer, _ = ProxyAuthentication.strip_query_token(headers["Referer"])
             headers["Referer"] = referer
         headers["Host"] = target.raw_authority
-        resource = request.app[MANAGEMENT_KEY].resource_for(origin, proxy.config)
-        call.source = "non-https" if target.scheme != "https" else "not-allowlisted"
-        if resource is not None:
-            call.source = "acquisition-interrupted"
-            result = await proxy.tokens.get_with_status(origin, resource)
-            call.source = result.source
-            call.token = result.token is not None
-            if result.token is not None:
-                headers["Authorization"] = f"Bearer {result.token}"
+        token = await self.token_for(request, target, call)
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
         call.emit(request.method)
         if proxy.session is None:
             raise RuntimeError("Proxy session has not started")
